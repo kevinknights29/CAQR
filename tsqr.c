@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/errno.h>
 #include "mpi.h"
 #include "mkl.h"
+#include "lapacke.h"
 
 
 // Function Prototype
-void row_decomp(const long m, const int size, const int rank, int *start, int *end);
-void tsqr(const long m, const long n, const double *matrix, const long p);
+void row_decomp(const int m, const int size, const int rank, int *start, int *end);
 
 
 int main(int argc, char *argv[]) {
@@ -15,8 +16,8 @@ int main(int argc, char *argv[]) {
 	MPI_Init(&argc, &argv);
 	int rank = 0;
 	int size = 0;
-	MPI_Commrank(&rank, MPI_COMM_WORLD);
-	MPI_Commsize(&size, MPI_COMM_WORLD);
+	MPI_Comm_rank(&rank, MPI_COMM_WORLD);
+	MPI_Comm_size(&size, MPI_COMM_WORLD);
 
 	// Check command line arguments
 	if (argc != 4) {
@@ -28,19 +29,19 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Parse command line argument from rank 0 (main processor)
-	long m = 0;
-	long n = 0;
+	int m = 0;
+	int n = 0;
 	char filename[256];
 	if (rank == 0) {
 		char *end = NULL;
-		m = strtol(argv[1], &end, 10);
+		m = (int) strtol(argv[1], &end, 10);
 		if ((argv[1] == end) || (*end != '\0')) {
 			fprintf(stderr, "Unable to parse m from command line...\n");
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
 
-		n = strtol(argv[2], &end, 10);
+		n = (int) strtol(argv[2], &end, 10);
 		if ((argv[2] == end) || (*end != '\0')) {
 			fprintf(stderr, "Unable to parse n from command line...\n");
 			MPI_Finalize();
@@ -70,7 +71,14 @@ int main(int argc, char *argv[]) {
 
 		for (size_t i = 0; i < (size_t) m; i++) {
 			for (size_t j = 0; j < (size_t) n; j++) {
-				matrix[((size_t) m * i) + j] = fscanf(file, "%.10lf");
+				char buffer[64];
+				char *endptr;
+				if (fscanf(file, "%63s", buffer) == 1) {
+					matrix[((size_t) m * i) + j] = strtod(buffer, &endptr);
+					if (endptr == buffer || errno == ERANGE) {
+						fprintf(stderr, "Error converting number\n");
+					}
+				}
 			}
 		}
 		fclose(file);
@@ -88,19 +96,19 @@ int main(int argc, char *argv[]) {
 	row_decomp((int) m, size, rank, &starting_row, &ending_row);
 
 	// Calculate local length from decomposition (1-indexed, inclusive)
-	long local_m = (ending_row - starting_row + 1);
-	long local_matrix_size = local_m * n;
+	int local_m = (ending_row - starting_row + 1);
+	const int local_matrix_size = local_m * n;
 
 	// Allocate local matrix
-	local_matrix = malloc(local_matrix_size * sizeof(*local_matrix));
+	local_matrix = malloc((long unsigned) local_matrix_size * sizeof(*local_matrix));
 
 	// Partition and distribute matrix across processors
 	// Prepare sendcounts and displacements arrays for Scatterv
 	int *sendcounts = NULL;
 	int *displs = NULL;
 	if (rank == 0) {
-		sendcounts = malloc(size * sizeof(*sendcounts));
-		displs = malloc(size * sizeof(*displs));
+		sendcounts = malloc((long unsigned) size * sizeof(*sendcounts));
+		displs = malloc((long unsigned) size * sizeof(*displs));
 		// Calculate sendcounts and displs for all ranks
 		for (int i = 0; i < size; i++) {
 			int _starting_row = 0;
@@ -135,7 +143,7 @@ int main(int argc, char *argv[]) {
 	 *						reflectors for the matrix Q in its decomposition in a product of elementary reflectors
 	 *						(see Orthogonal Factorizations).
 	 */
-	double *tau = malloc(min(m, n) * sizeof(*tau));
+	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf (LAPACK_ROW_MAJOR, local_m, n, matrix, n, tau);
 
 	// Validate QR
@@ -156,11 +164,11 @@ int main(int argc, char *argv[]) {
  * @param end		Pointer to an int to store ending index
  */
 void row_decomp(const int m, const int size, const int rank, int *start, int *end) {
-	int base_split = m / size;
-	int remainder = m % size;
+	const int base_split = m / size;
+	const int remainder = m % size;
 
 	// Calculate how many rows this rank gets
-	int my_rows = base_split + (rank < remainder ? 1 : 0);
+	const int my_rows = base_split + (rank < remainder ? 1 : 0);
 
 	// Calculate starting position (1-indexed)
 	// Ranks [0, remainder-1] get (base_split + 1) elements each
@@ -174,15 +182,4 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 
 	*start = offset;  // Convert to 1-indexed
 	*end = offset + my_rows;  // Last element for this rank
-}
-
-/**
- *
- * @param m: number of rows
- * @param n: number of columns
- * @param matrix: pointer to a m x n matrix
- * @param p: number of processors
- */
-void tsqr(const long m, const long n, const double *matrix, const long p) {
-
 }
