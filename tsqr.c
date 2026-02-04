@@ -4,7 +4,6 @@
 #include <sys/errno.h>
 #include "mpi.h"
 #include "mkl.h"
-#include "lapacke.h"
 
 
 // Function Prototype
