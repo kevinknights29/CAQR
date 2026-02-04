@@ -4,15 +4,18 @@
 # Requires: module load mkl/latest
 
 CC = gcc
-C_FLAGS = -std=c23 -Wall -Wextra -Wpedantic -Wconversion
+MPI_CC = mpicc
+CC_FLAGS = -std=c23 -Wall -Wextra -Wpedantic -Wconversion
+MKL_FLAGS = -m64 -I "${MKLROOT}/include" -L "${MKLROOT}/lib"
+LD_FLAGS = -lmkl_rt -Wl,--no-as-needed -lpthread -lm -ldl
 
 all: matrix_generator tsqr
 
 matrix_generator: matrix_generator.c
-	$(CC) $(C_FLAGS) -o matrix_generator{,.c}
+	$(CC) $(CC_FLAGS) -o matrix_generator{,.c}
 
 tsqr: tsqr.c
-	$(CC) $(C_FLAGS) -o tsqr{,.c}
+	$(MPI_CC) $(CC_FLAGS) $(MKL_FLAGS) -o tsqr{,.c} ($LD_FLAGS)
 
 .PHONY:
 	clean
