@@ -15,7 +15,7 @@ matrix_generator: matrix_generator.c
 	$(CC) $(CC_FLAGS) -o matrix_generator{,.c}
 
 tsqr: tsqr.c
-	$(MPI_CC) $(CC_FLAGS) $(MKL_FLAGS) -o tsqr{,.c} ($LD_FLAGS)
+	$(MPI_CC) $(CC_FLAGS) $(MKL_FLAGS) -o tsqr{,.c} $(LD_FLAGS)
 
 .PHONY:
 	clean
