@@ -12,13 +12,13 @@ int main(const int argc, char *argv[]) {
 	}
 
 	char *end = NULL;
-	const long m = strtol(argv[1], &end, 10);
+	const int m = (int) strtol(argv[1], &end, 10);
 	if ((argv[1] == end) || (*end != '\0')) {
 		fprintf(stderr, "Unable to parse m from command line...\n");
 		return EXIT_FAILURE;
 	}
 
-	const long n = strtol(argv[2], &end, 10);
+	const int n = (int) strtol(argv[2], &end, 10);
 	if ((argv[2] == end) || (*end != '\0')) {
 		fprintf(stderr, "Unable to parse n from command line...\n");
 		return EXIT_FAILURE;
@@ -34,13 +34,14 @@ int main(const int argc, char *argv[]) {
 	for (size_t i = 0; i < (size_t) m; i++) {
 		for (size_t j = 0; j < (size_t) n; j++) {
 			const double scaling_factor  = 100.0;
-			matrix[((size_t) m * i) + j] = scaling_factor * ((double) random() / RAND_MAX);
+			const size_t index = (size_t) n * i + j;
+			matrix[index] = scaling_factor * ((double) random() / RAND_MAX);
 		}
 	}
 
 	// Writes the matrix to a file
 	char filename[100];
-	sprintf(filename, "matrix_%ld_%ld.txt", m, n);
+	sprintf(filename, "matrix_%d_%d.txt", m, n);
 	FILE *file = fopen(filename, "w");
 	if (file == NULL) {
 		fprintf(stderr, "Unable to open: %s...\n", filename);
@@ -49,7 +50,8 @@ int main(const int argc, char *argv[]) {
 	}
 	for (size_t i = 0; i < (size_t) m; i++) {
 		for (size_t j = 0; j < (size_t) n; j++) {
-			fprintf(file, "%.10lf", matrix[((size_t) m * i) + j]);
+			const size_t index = (size_t) n * i + j;
+			fprintf(file, "%.10lf", matrix[index]);
 			if (j < (size_t) (n - 1)) {
 				fprintf(file, ", ");
 			} else {
@@ -60,7 +62,7 @@ int main(const int argc, char *argv[]) {
 	}
 	fclose(file);
 	free(matrix);
-	printf("Wrote %ld x %ld matrix to: '%s'\n", m, n, filename);
+	printf("Wrote %d x %d matrix to: '%s'\n", m, n, filename);
 
 	return EXIT_SUCCESS;
 }
