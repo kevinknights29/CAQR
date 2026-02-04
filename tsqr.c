@@ -7,7 +7,7 @@
 
 
 // Function Prototype
-void row_decomp(const int m, const int size, const int rank, int *start, int *end);
+void row_decomp(int m, int size, int rank, int *start, int *end);
 
 
 int main(int argc, char *argv[]) {
@@ -73,7 +73,8 @@ int main(int argc, char *argv[]) {
 				char buffer[64];
 				char *endptr;
 				if (fscanf(file, "%63s", buffer) == 1) {
-					matrix[((size_t) m * i) + j] = strtod(buffer, &endptr);
+					const size_t index = (size_t) n * i + j;
+					matrix[index] = strtod(buffer, &endptr);
 					if (endptr == buffer || errno == ERANGE) {
 						fprintf(stderr, "Error converting number\n");
 					}
