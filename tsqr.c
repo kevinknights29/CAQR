@@ -34,14 +34,14 @@ int main(int argc, char *argv[]) {
 	if (rank == 0) {
 		char *end = NULL;
 		m = (int) strtol(argv[1], &end, 10);
-		if ((argv[1] == end) || (*end != '\0')) {
+		if (argv[1] == end || *end != '\0') {
 			fprintf(stderr, "Unable to parse m from command line...\n");
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
 
 		n = (int) strtol(argv[2], &end, 10);
-		if ((argv[2] == end) || (*end != '\0')) {
+		if (argv[2] == end || *end != '\0') {
 			fprintf(stderr, "Unable to parse n from command line...\n");
 			MPI_Finalize();
 			return EXIT_FAILURE;
@@ -93,10 +93,10 @@ int main(int argc, char *argv[]) {
 	// Compute rows decomposition
 	int starting_row = 0;
 	int ending_row = 0;
-	row_decomp((int) m, size, rank, &starting_row, &ending_row);
+	row_decomp(m, size, rank, &starting_row, &ending_row);
 
 	// Calculate local length from decomposition (1-indexed, inclusive)
-	int local_m = (ending_row - starting_row + 1);
+	int local_m = ending_row - starting_row + 1;
 	const int local_matrix_size = local_m * n;
 
 	// Allocate local matrix
@@ -114,7 +114,7 @@ int main(int argc, char *argv[]) {
 			int _starting_row = 0;
 			int _ending_row = 0;
 			row_decomp(m, size, i, &_starting_row, &_ending_row);
-			sendcounts[i] = (_starting_row - _ending_row + 1) * n;  // Number of elements
+			sendcounts[i] = (_ending_row - _starting_row + 1) * n;  // Number of elements
 			displs[i] = _starting_row;
 		}
 	}
