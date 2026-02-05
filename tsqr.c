@@ -64,6 +64,8 @@ int main(int argc, char *argv[]) {
 		matrix = malloc((long unsigned) (m * n) * sizeof(*matrix));
 		if (matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for matrix...\n");
+			free(matrix);
+			fclose(file);
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
@@ -144,10 +146,21 @@ int main(int argc, char *argv[]) {
 	 *						(see Orthogonal Factorizations).
 	 */
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
-	LAPACKE_dgeqrf (LAPACK_ROW_MAJOR, local_m, n, matrix, n, tau);
+	LAPACKE_dgeqrf (LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d ", rank, local_m, n);
 
 	// Validate QR
+
+	// Cleanup
+	if (rank == 0) {
+		free(matrix);
+		free(sendcounts);
+		free(displs);
+	}
+	free(local_matrix);
+	free(tau);
 	MPI_Finalize();
+
 	return EXIT_SUCCESS;
 }
 
