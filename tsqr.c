@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
 	 */
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf (LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
-	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d ", rank, local_m, n);
+	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 
 	// Validate QR
 
@@ -181,7 +181,7 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 	const int remainder = m % size;
 
 	// Calculate how many rows this rank gets
-	const int my_rows = base_split + (rank < remainder ? 1 : 0);
+	const int rows = base_split + (rank < remainder ? 1 : 0);
 
 	// Calculate starting position (1-indexed)
 	// Ranks [0, remainder-1] get (base_split + 1) elements each
@@ -193,6 +193,6 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 		offset = remainder * (base_split + 1) + (rank - remainder) * base_split;
 	}
 
-	*start = offset;  // Convert to 1-indexed
-	*end = offset + my_rows;  // Last element for this rank
+	*start = offset;
+	*end = offset + rows - 1;  // Last element for this rank
 }
