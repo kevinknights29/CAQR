@@ -316,6 +316,15 @@ int main(int argc, char *argv[]) {
 		printf("[DEBUG] Rank %d stacked R matrices resulting in a matrix %d x %d\n", rank, local_m, n);
 	}
 
+	// Stage 4: Independent computation of the QR factorization of each stacked block row
+	if (rank == 0) {
+		tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
+		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+		remove_entries_below_diagonal(local_matrix, local_m, n);
+		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
+	}
+	MPI_Barrier(MPI_COMM_WORLD);
+
 	// Validate QR
 	if (rank == 0) {
 		char output_filename[256];
