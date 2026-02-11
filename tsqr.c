@@ -155,6 +155,7 @@ int main(int argc, char *argv[]) {
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
 	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
+	MPI_Barrier(MPI_COMM_WORLD);
 
 	// Stage 1: Group them into successive pairs and do the QR factorizations of grouped pairs in parallel
 	double *incoming_matrix = NULL;
@@ -251,6 +252,7 @@ int main(int argc, char *argv[]) {
 		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
+	MPI_Barrier(MPI_COMM_WORLD);
 
 	// Stage 3: Group them into successive pairs and do the QR factorizations of grouped pairs in parallel
 	// Processor 2 sends R matrix to Processor 0
