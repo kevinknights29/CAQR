@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
 			return EXIT_FAILURE;
 		}
 		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
-		memcpy(stacked_matrix + incoming_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
+		memcpy(stacked_matrix + local_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 
 		// Cleanup
 		free(local_matrix);
@@ -249,6 +249,7 @@ int main(int argc, char *argv[]) {
 
 	// Stage 2: Independent computation of the QR factorization of each stacked block row
 	if (rank == 0 || rank == 2) {
+		tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
@@ -295,7 +296,7 @@ int main(int argc, char *argv[]) {
 			return EXIT_FAILURE;
 		}
 		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
-		memcpy(stacked_matrix + incoming_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
+		memcpy(stacked_matrix + local_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 
 		// Cleanup
 		free(local_matrix);
