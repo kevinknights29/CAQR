@@ -8,6 +8,7 @@
 
 // Function Prototype
 void row_decomp(int m, int size, int rank, int *start, int *end);
+void remove_entries_below_diagonal(double *matrix, int m, int n);
 
 
 int main(int argc, char *argv[]) {
@@ -154,6 +155,7 @@ int main(int argc, char *argv[]) {
 	 */
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+	remove_entries_below_diagonal(local_matrix, local_m, n);
 	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	MPI_Barrier(MPI_COMM_WORLD);
 
@@ -251,6 +253,7 @@ int main(int argc, char *argv[]) {
 	if (rank == 0 || rank == 2) {
 		tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+		remove_entries_below_diagonal(local_matrix, local_m, n);
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
 	MPI_Barrier(MPI_COMM_WORLD);
@@ -379,4 +382,22 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 
 	*start = offset;
 	*end = offset + rows - 1;  // Last element for this rank
+}
+
+
+/**
+ * @brief Sets to 0 the entries below the main diagonal
+ *
+ * @param matrix	A matrix of doubles
+ * @param m			The number of rows of the matrix
+ * @param n			The number of columns of the matrix
+ */
+void remove_entries_below_diagonal(double *matrix, const int m, const int n) {
+	for (size_t i = 0; i < (size_t) m; i++) {
+		for (size_t j = 0; j < (size_t) n; j++) {
+			if (i > j) {
+				matrix[i * n + j] = 0.0;
+			}
+		}
+	}
 }
