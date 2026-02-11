@@ -8,7 +8,7 @@
 
 // Function Prototype
 void row_decomp(int m, int size, int rank, int *start, int *end);
-
+double *stack_matrices(const double *top_matrix, int top_matrix_size, const double *bottom_matrix, int bottom_matrix_size);
 
 int main(int argc, char *argv[]) {
 	// Initialize MPI
@@ -99,7 +99,7 @@ int main(int argc, char *argv[]) {
 
 	// Calculate local length from decomposition (1-indexed, inclusive)
 	int local_m = ending_row - starting_row + 1;
-	const int local_matrix_size = local_m * n;
+	int local_matrix_size = local_m * n;
 
 	// Allocate local matrix
 	local_matrix = malloc((long unsigned) local_matrix_size * sizeof(*local_matrix));
@@ -124,7 +124,14 @@ int main(int argc, char *argv[]) {
 	// Scatter the matrix to all ranks
 	MPI_Scatterv(matrix, sendcounts, displs, MPI_DOUBLE, local_matrix, (int) local_matrix_size, MPI_LONG, 0, MPI_COMM_WORLD);
 
-	// Compute QR
+	// Clean up
+	if (rank == 0) {
+		free(matrix);
+		free(sendcounts);
+		free(displs);
+	}
+
+	// Stage 0: Independent computation of the QR factorization of each block row
 	/* ?geqrf Computes the QR factorization of a general m-by-n matrix
 	 * Input Parameters:
 	 * matrix_layout	Specifies whether matrix storage layout is row major (LAPACK_ROW_MAJOR)
@@ -146,19 +153,178 @@ int main(int argc, char *argv[]) {
 	 *						(see Orthogonal Factorizations).
 	 */
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
-	LAPACKE_dgeqrf (LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+	LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
 	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 
+	// Stage 1: Group them into successive pairs and do the QR factorizations of grouped pairs in parallel
+	double *incoming_matrix = NULL;
+	int incoming_matrix_size = 0;
+	double *stacked_matrix = NULL;
+
+	// Processor 1 sends R matrix to Processor 0
+	if (rank == 1) {
+		const int receptor_rank = 0;
+		MPI_Send(&local_matrix_size, 1, MPI_INT, &receptor_rank, 90, MPI_COMM_WORLD);
+		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, &receptor_rank, 91, MPI_COMM_WORLD);
+
+		// Cleanup
+		free(local_matrix);
+		free(tau);
+	}
+
+	// Processor 0 receives matrix
+	if (rank == 0) {
+		const int emissor_rank = 0;
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 90, MPI_COMM_WORLD);
+		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
+		if (incoming_matrix == NULL) {
+			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
+			free(local_matrix);
+			free(tau);
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, &emissor_rank, 91, MPI_COMM_WORLD);
+	}
+
+	// Processor 3 sends R matrix to Processor 2
+	if (rank == 3) {
+		const int receptor_rank = 2;
+		MPI_Send(&local_matrix_size, 1, MPI_INT, &receptor_rank, 92, MPI_COMM_WORLD);
+		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, &receptor_rank, 93, MPI_COMM_WORLD);
+	}
+
+	// Processor 2 receives matrix
+	if (rank == 2) {
+		const int emissor_rank = 3;
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 92, MPI_COMM_WORLD);
+		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
+		if (incoming_matrix == NULL) {
+			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
+			free(local_matrix);
+			free(tau);
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, 1, 93, MPI_COMM_WORLD);
+	}
+
+	// Processors 0 and 2 stack local_matrix and incoming_matrix
+	if (rank == 0 || rank == 2) {
+		stacked_matrix = stack_matrices(local_matrix, local_matrix_size, incoming_matrix, incoming_matrix_size);
+		if (stacked_matrix == NULL) {
+			fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
+			free(local_matrix);
+			free(tau);
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+
+		// Cleanup
+		free(local_matrix);
+		free(incoming_matrix);
+		free(tau);
+
+		// Update pointers
+		local_matrix = stacked_matrix;
+		stacked_matrix = NULL;
+		tau = NULL;
+		incoming_matrix = NULL;
+		local_m = (local_matrix_size + incoming_matrix_size) / n;
+		local_matrix_size = local_m * n;
+		printf("[DEBUG] Rank %d stacked R matrices resulting in a matrix %d x %d\n", rank, local_m, n);
+	}
+
+	// Stage 2: Independent computation of the QR factorization of each stacked block row
+	if (rank == 0 || rank == 2) {
+		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
+	}
+
+	// Stage 3: Group them into successive pairs and do the QR factorizations of grouped pairs in parallel
+	// Processor 2 sends R matrix to Processor 0
+	if (rank == 2) {
+		const int receptor_rank = 0;
+		MPI_Send(&local_matrix_size, 1, MPI_INT, receptor_rank, 94, MPI_COMM_WORLD);
+		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, receptor_rank, 95, MPI_COMM_WORLD);
+
+		// Cleanup
+		free(local_matrix);
+		free(tau);
+	}
+
+	// Processor 0 receives matrix
+	if (rank == 0) {
+		const int emissor_rank = 2;
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 94, MPI_COMM_WORLD);
+		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
+		if (incoming_matrix == NULL) {
+			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
+			free(local_matrix);
+			free(tau);
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, &emissor_rank, 95, MPI_COMM_WORLD);
+	}
+
+	// Processors 0 stacks local_matrix and incoming_matrix
+	if (rank == 0) {
+		stacked_matrix = stack_matrices(local_matrix, local_matrix_size, incoming_matrix, incoming_matrix_size);
+		if (stacked_matrix == NULL) {
+			fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
+			free(local_matrix);
+			free(tau);
+			MPI_Finalize();
+			return EXIT_FAILURE;
+		}
+
+		// Cleanup
+		free(local_matrix);
+		free(incoming_matrix);
+		free(tau);
+
+		// Update pointers
+		local_matrix = stacked_matrix;
+		stacked_matrix = NULL;
+		tau = NULL;
+		incoming_matrix = NULL;
+		local_m = (local_matrix_size + incoming_matrix_size) / n;
+		local_matrix_size = local_m * n;
+		printf("[DEBUG] Rank %d stacked R matrices resulting in a matrix %d x %d\n", rank, local_m, n);
+	}
+
 	// Validate QR
+	if (rank == 0) {
+		char output_filename[256];
+		sprintf(output_filename, "caqr_matrix_%d_%d.txt", local_m, n);
+		FILE *file = fopen(output_filename, "w");
+		if (file == NULL) {
+			fprintf(stderr, "Unable to open: %s...\n", output_filename);
+			free(local_matrix);
+			return EXIT_FAILURE;
+		}
+		for (size_t i = 0; i < (size_t) local_m; i++) {
+			for (size_t j = 0; j < (size_t) n; j++) {
+				const size_t index = (size_t) n * i + j;
+				fprintf(file, "%.10lf", matrix[index]);
+				if (j < (size_t) (n - 1)) {
+					fprintf(file, ", ");
+				} else {
+					fprintf(file, "\n");
+				}
+
+			}
+		}
+		fclose(file);
+
+		printf("[DEBUG] Rank %d wrote resulting R matrix %d x %d\n", rank, local_m, n);
+	}
 
 	// Cleanup
 	if (rank == 0) {
-		free(matrix);
-		free(sendcounts);
-		free(displs);
+		free(local_matrix);
 	}
-	free(local_matrix);
-	free(tau);
 	MPI_Finalize();
 
 	return EXIT_SUCCESS;
@@ -195,4 +361,24 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 
 	*start = offset;
 	*end = offset + rows - 1;  // Last element for this rank
+}
+
+/**
+ * @brief Stack two matrices together.
+ *
+ * @param top_matrix			A matrix containing the top values of the stack
+ * @param top_matrix_size		The number of elements in the top matrix
+ * @param bottom_matrix			A matrix containing the bottom values of the stack
+ * @param bottom_matrix_size	The number of elements in the bottom matrix
+ * @return pointer to double array of size (top_matrix_size + bottom_matrix_size), NULL if memory allocation failed.
+ */
+double *stack_matrices(const double *top_matrix, const int top_matrix_size, const double *bottom_matrix, const int bottom_matrix_size) {
+	double *stacked_matrix = malloc((long unsigned) (top_matrix_size + bottom_matrix_size) * sizeof(*stacked_matrix));
+	if (stacked_matrix == NULL) {
+		fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
+		return NULL;
+	}
+	memcpy(stacked_matrix, top_matrix, top_matrix_size * sizeof(*top_matrix));
+	memcpy(stacked_matrix + top_matrix_size, bottom_matrix, bottom_matrix_size * sizeof(*bottom_matrix));
+	return stacked_matrix;
 }
