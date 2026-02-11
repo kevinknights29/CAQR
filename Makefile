@@ -1,8 +1,4 @@
-# Requires: module load gcc/15.2.0-gcc-8.5.0-r7c4jsu
-# Requires: module load mpi/latest
-# Requires: module load tbb/latest
-# Requires: module load compiler-rt/latest
-# Requires: module load mkl/latest
+# Requires: module load gcc/15.2.0-gcc-8.5.0-r7c4jsu mpi/latest tbb/latest compiler-rt/latest mkl/latest
 
 CC = gcc
 MPI_CC = mpicc
