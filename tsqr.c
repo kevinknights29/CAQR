@@ -396,7 +396,8 @@ void remove_entries_below_diagonal(double *matrix, const int m, const int n) {
 	for (size_t i = 0; i < (size_t) m; i++) {
 		for (size_t j = 0; j < (size_t) n; j++) {
 			if (i > j) {
-				matrix[i * n + j] = 0.0;
+				const size_t index = (size_t) n * i + j;
+				matrix[index] = 0.0;
 			}
 		}
 	}
