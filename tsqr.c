@@ -164,8 +164,8 @@ int main(int argc, char *argv[]) {
 	// Processor 1 sends R matrix to Processor 0
 	if (rank == 1) {
 		const int receptor_rank = 0;
-		MPI_Send(&local_matrix_size, 1, MPI_INT, &receptor_rank, 90, MPI_COMM_WORLD);
-		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, &receptor_rank, 91, MPI_COMM_WORLD);
+		MPI_Send(&local_matrix_size, 1, MPI_INT, receptor_rank, 90, MPI_COMM_WORLD);
+		MPI_Send(local_matrix, local_matrix_size, MPI_DOUBLE, receptor_rank, 91, MPI_COMM_WORLD);
 
 		// Cleanup
 		free(local_matrix);
@@ -175,7 +175,7 @@ int main(int argc, char *argv[]) {
 	// Processor 0 receives matrix
 	if (rank == 0) {
 		const int emissor_rank = 0;
-		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 90, MPI_COMM_WORLD);
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, emissor_rank, 90, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 		if (incoming_matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
@@ -184,20 +184,20 @@ int main(int argc, char *argv[]) {
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
-		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, &emissor_rank, 91, MPI_COMM_WORLD);
+		MPI_Recv(incoming_matrix, incoming_matrix_size, MPI_DOUBLE, emissor_rank, 91, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	}
 
 	// Processor 3 sends R matrix to Processor 2
 	if (rank == 3) {
 		const int receptor_rank = 2;
-		MPI_Send(&local_matrix_size, 1, MPI_INT, &receptor_rank, 92, MPI_COMM_WORLD);
-		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, &receptor_rank, 93, MPI_COMM_WORLD);
+		MPI_Send(&local_matrix_size, 1, MPI_INT, receptor_rank, 92, MPI_COMM_WORLD);
+		MPI_Send(local_matrix, &local_matrix_size, MPI_DOUBLE, receptor_rank, 93, MPI_COMM_WORLD);
 	}
 
 	// Processor 2 receives matrix
 	if (rank == 2) {
 		const int emissor_rank = 3;
-		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 92, MPI_COMM_WORLD);
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, emissor_rank, 92, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 		if (incoming_matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
@@ -206,7 +206,7 @@ int main(int argc, char *argv[]) {
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
-		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, 1, 93, MPI_COMM_WORLD);
+		MPI_Recv(incoming_matrix, incoming_matrix_size, MPI_DOUBLE, emissor_rank, 93, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	}
 
 	// Processors 0 and 2 stack local_matrix and incoming_matrix
@@ -256,7 +256,7 @@ int main(int argc, char *argv[]) {
 	// Processor 0 receives matrix
 	if (rank == 0) {
 		const int emissor_rank = 2;
-		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 94, MPI_COMM_WORLD);
+		MPI_Recv(&incoming_matrix_size, 1, MPI_INT, &emissor_rank, 94, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 		incoming_matrix = malloc((long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 		if (incoming_matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
@@ -265,7 +265,7 @@ int main(int argc, char *argv[]) {
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
-		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, &emissor_rank, 95, MPI_COMM_WORLD);
+		MPI_Recv(incoming_matrix, &incoming_matrix_size, MPI_DOUBLE, &emissor_rank, 95, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	}
 
 	// Processors 0 stacks local_matrix and incoming_matrix
@@ -378,7 +378,7 @@ double *stack_matrices(const double *top_matrix, const int top_matrix_size, cons
 		fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
 		return NULL;
 	}
-	memcpy(stacked_matrix, top_matrix, top_matrix_size * sizeof(*top_matrix));
-	memcpy(stacked_matrix + top_matrix_size, bottom_matrix, bottom_matrix_size * sizeof(*bottom_matrix));
+	memcpy(stacked_matrix, top_matrix, (long unsigned) top_matrix_size * sizeof(*top_matrix));
+	memcpy(stacked_matrix + top_matrix_size, bottom_matrix, (long unsigned) bottom_matrix_size * sizeof(*bottom_matrix));
 	return stacked_matrix;
 }
