@@ -13,13 +13,13 @@ int main(const int argc, char *argv[]) {
 
 	char *end = NULL;
 	const int m = (int) strtol(argv[1], &end, 10);
-	if ((argv[1] == end) || (*end != '\0')) {
+	if (argv[1] == end || *end != '\0') {
 		fprintf(stderr, "Unable to parse m from command line...\n");
 		return EXIT_FAILURE;
 	}
 
 	const int n = (int) strtol(argv[2], &end, 10);
-	if ((argv[2] == end) || (*end != '\0')) {
+	if (argv[2] == end || *end != '\0') {
 		fprintf(stderr, "Unable to parse n from command line...\n");
 		return EXIT_FAILURE;
 	}
