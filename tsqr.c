@@ -2,13 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/errno.h>
-#include "mpi.h"
 #include "mkl.h"
+#include "mpi.h"
 
 
 // Function Prototype
 void row_decomp(int m, int size, int rank, int *start, int *end);
-double *stack_matrices(const double *top_matrix, int top_matrix_size, const double *bottom_matrix, int bottom_matrix_size);
+
 
 int main(int argc, char *argv[]) {
 	// Initialize MPI
@@ -211,14 +211,17 @@ int main(int argc, char *argv[]) {
 
 	// Processors 0 and 2 stack local_matrix and incoming_matrix
 	if (rank == 0 || rank == 2) {
-		stacked_matrix = stack_matrices(local_matrix, local_matrix_size, incoming_matrix, incoming_matrix_size);
+		stacked_matrix = malloc((long unsigned) (local_matrix_size + incoming_matrix_size) * sizeof(*stacked_matrix));
 		if (stacked_matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
 			free(local_matrix);
+			free(incoming_matrix);
 			free(tau);
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
+		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
+		memcpy(stacked_matrix + incoming_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 
 		// Cleanup
 		free(local_matrix);
@@ -270,14 +273,17 @@ int main(int argc, char *argv[]) {
 
 	// Processors 0 stacks local_matrix and incoming_matrix
 	if (rank == 0) {
-		stacked_matrix = stack_matrices(local_matrix, local_matrix_size, incoming_matrix, incoming_matrix_size);
+		stacked_matrix = malloc((long unsigned) (local_matrix_size + incoming_matrix_size) * sizeof(*stacked_matrix));
 		if (stacked_matrix == NULL) {
 			fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
 			free(local_matrix);
+			free(incoming_matrix);
 			free(tau);
 			MPI_Finalize();
 			return EXIT_FAILURE;
 		}
+		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
+		memcpy(stacked_matrix + incoming_matrix_size, incoming_matrix, (long unsigned) incoming_matrix_size * sizeof(*incoming_matrix));
 
 		// Cleanup
 		free(local_matrix);
@@ -361,24 +367,4 @@ void row_decomp(const int m, const int size, const int rank, int *start, int *en
 
 	*start = offset;
 	*end = offset + rows - 1;  // Last element for this rank
-}
-
-/**
- * @brief Stack two matrices together.
- *
- * @param top_matrix			A matrix containing the top values of the stack
- * @param top_matrix_size		The number of elements in the top matrix
- * @param bottom_matrix			A matrix containing the bottom values of the stack
- * @param bottom_matrix_size	The number of elements in the bottom matrix
- * @return pointer to double array of size (top_matrix_size + bottom_matrix_size), NULL if memory allocation failed.
- */
-double *stack_matrices(const double *top_matrix, const int top_matrix_size, const double *bottom_matrix, const int bottom_matrix_size) {
-	double *stacked_matrix = malloc((long unsigned) (top_matrix_size + bottom_matrix_size) * sizeof(*stacked_matrix));
-	if (stacked_matrix == NULL) {
-		fprintf(stderr, "Unable to allocate memory for stacked matrix...\n");
-		return NULL;
-	}
-	memcpy(stacked_matrix, top_matrix, (long unsigned) top_matrix_size * sizeof(*top_matrix));
-	memcpy(stacked_matrix + top_matrix_size, bottom_matrix, (long unsigned) bottom_matrix_size * sizeof(*bottom_matrix));
-	return stacked_matrix;
 }
