@@ -1,2 +1,2 @@
 # CAQR
-Communication-Avoding QR Implementation for Case Studies in HPC.
+Communication-Avoiding QR Implementation for Case Studies in HPC.
