@@ -24,7 +24,7 @@ int main(int argc, char *argv[]) {
 		if (rank == 0) {
 			fprintf(stderr, "Usage: %s <m> <n> <matrix_file>\n", argv[0]);
 		}
-		MPI_Finalize();
+		MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 		exit(EXIT_FAILURE);
 	}
 
@@ -37,14 +37,14 @@ int main(int argc, char *argv[]) {
 		m = (int) strtol(argv[1], &end, 10);
 		if (argv[1] == end || *end != '\0') {
 			fprintf(stderr, "Unable to parse m from command line...\n");
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 
 		n = (int) strtol(argv[2], &end, 10);
 		if (argv[2] == end || *end != '\0') {
 			fprintf(stderr, "Unable to parse n from command line...\n");
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 
@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
 		FILE *file = fopen(filename, "r");
 		if (file == NULL) {
 			fprintf(stderr, "Unable to open: %s...\n", filename);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "Unable to allocate memory for matrix...\n");
 			free(matrix);
 			fclose(file);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 
@@ -185,7 +185,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
 			free(local_matrix);
 			free(tau);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 		MPI_Recv(incoming_matrix, incoming_matrix_size, MPI_DOUBLE, emissor_rank, 91, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
 			free(local_matrix);
 			free(tau);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 		MPI_Recv(incoming_matrix, incoming_matrix_size, MPI_DOUBLE, emissor_rank, 93, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -228,7 +228,7 @@ int main(int argc, char *argv[]) {
 			free(local_matrix);
 			free(incoming_matrix);
 			free(tau);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
@@ -280,7 +280,7 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr, "Unable to allocate memory for incoming matrix...\n");
 			free(local_matrix);
 			free(tau);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 		MPI_Recv(incoming_matrix, incoming_matrix_size, MPI_DOUBLE, emissor_rank, 95, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -295,7 +295,7 @@ int main(int argc, char *argv[]) {
 			free(local_matrix);
 			free(incoming_matrix);
 			free(tau);
-			MPI_Finalize();
+			MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 			return EXIT_FAILURE;
 		}
 		memcpy(stacked_matrix, local_matrix, (long unsigned) local_matrix_size * sizeof(*local_matrix));
