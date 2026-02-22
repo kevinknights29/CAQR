@@ -15,7 +15,11 @@ tsqr: tsqr.c
 	$(MPI_CC) $(CC_FLAGS) $(MKL_FLAGS) -o tsqr{,.c} $(LD_FLAGS)
 
 .PHONY:
-	clean
+	clean test
 
 clean:
 	rm -f matrix_generator matrix_*.txt tsqr
+
+test: matrix_generator tsqr
+	./matrix_generator 16 3
+	mpirun ./tsqr 16 3 matrix_16_3.txt
