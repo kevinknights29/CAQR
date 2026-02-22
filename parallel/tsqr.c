@@ -395,7 +395,7 @@ int main(int argc, char *argv[]) {
     // Rank 2 sends its stage-1 Q data to rank 0
     double *Q1_rank2_data = NULL;
     double *tau1_rank2    = NULL;
-    int Q1_size = 2 * n;   // rows of Q1 matrix (2n)
+    int Q1_size = 2 * mb;   // rows of Q1 matrix (2mb)
     if (rank == 2) {
         MPI_Send(Q1_data, Q1_size * n, MPI_DOUBLE, 0, 96, MPI_COMM_WORLD);
         MPI_Send(tau1,    n,           MPI_DOUBLE, 0, 97, MPI_COMM_WORLD);
@@ -429,7 +429,7 @@ int main(int argc, char *argv[]) {
         double *R_2_R_3 = malloc((size_t)(2 * mb * n) * sizeof(*R_2_R_3));
         apply_Q_to_R(2 * mb, n, Q1_rank2_data, tau1_rank2, R_23, R_2_R_3); // Q1_rank2 output
         double *R_2 = R_2_R_3;
-        double *R_3 = R_2_R_3 + n * n;
+    	double *R_3 = R_2_R_3 + mb * n;
 
         // --- Unroll stage 0: A_i = Q_i @ R_i ---
         double *A_reconstructed = malloc((size_t)(m * n) * sizeof(double));
@@ -448,11 +448,11 @@ int main(int argc, char *argv[]) {
 
         // Write reconstructed A
         FILE *f = fopen("A_reconstructed.txt", "w");
-        for (int i = 0; i < (size_t) m; i++) {
-            for (int j = 0; j < (size_t) n; j++) {
+        for (size_t i = 0; i < (size_t) m; i++) {
+            for (size_t j = 0; j < (size_t) n; j++) {
             	const size_t index = (size_t) n * i + j;
                 fprintf(f, "%.10lf%s", A_reconstructed[index],
-                        j < n - 1 ? ", " : "\n");
+                        j < (size_t) (n - 1) ? ", " : "\n");
             }
         }
         fclose(f);
