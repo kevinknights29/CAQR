@@ -121,7 +121,7 @@ int main(int argc, char *argv[]) {
 			int _ending_row = 0;
 			row_decomp(m, size, i, &_starting_row, &_ending_row);
 			sendcounts[i] = (_ending_row - _starting_row + 1) * n;  // Number of elements
-			displs[i] = _starting_row;
+			displs[i] = _starting_row * n;
 		}
 	}
 
