@@ -23,9 +23,9 @@ if [ "$RATIO" -le "$N" ]; then
     echo "WARNING: m/p ($RATIO) is not >> n ($N). Results may not be meaningful."
 fi
 
-# ── Load modules (adapt to your cluster's module system) ──────────────────────
+# ── Load modules ──────────────────────
 module purge
-module load mpi/openmpi        # or intel-mpi, mpich, etc.
+module module load gcc/15.2.0-gcc-8.5.0-r7c4jsu mpi/latest tbb/latest compiler-rt/latest mkl/latest
 
 # ── Setup directories ─────────────────────────────────────────────────────────
 mkdir -p logs results
@@ -39,30 +39,29 @@ if [ ! -f "$MATRIX_FILE" ]; then
     exit 1
 fi
 
-# ── Run TSQR with timing ──────────────────────────────────────────────────────
+# ── Run TSQR, capture output ──────────────────────────────────────────────────
 echo "[$(date)] Launching TSQR: m=$M, n=$N, p=$P"
 
-# /usr/bin/time writes to stderr by default; redirect to a temp file
-TIME_OUTPUT=$( { /usr/bin/time -v \
-    mpirun -np "$P" ./tsqr "$M" "$N" "$MATRIX_FILE" \
-    ; } 2>&1 )
-
+TSQR_OUTPUT=$(mpirun -np "$P" ./tsqr "$M" "$N" "$MATRIX_FILE" 2>&1)
 EXIT_CODE=$?
 
-# ── Parse wall-clock time from /usr/bin/time -v output ───────────────────────
-WALL_TIME=$(echo "$TIME_OUTPUT" | grep "Elapsed (wall clock)" | awk '{print $NF}')
-USER_TIME=$(echo "$TIME_OUTPUT" | grep "User time"           | awk '{print $NF}')
-SYS_TIME=$( echo "$TIME_OUTPUT" | grep "System time"         | awk '{print $NF}')
-MAX_RSS=$(  echo "$TIME_OUTPUT" | grep "Maximum resident"     | awk '{print $NF}')
+echo "$TSQR_OUTPUT"  # still echoes everything to the .out log
 
-echo "$TIME_OUTPUT"  # echo full output to the .out log
+# ── Parse timing from TSQR printed output ────────────────────────────────────
+WALL_MAX=$(echo "$TSQR_OUTPUT" | grep "Max (critical path)" | awk '{print $(NF-1)}')
+
+if [ -z "$WALL_MAX" ]; then
+    echo "WARNING: Could not parse [TIMING] output. Check tsqr stdout."
+    WALL_MAX="NA"
+fi
 
 # ── Append results to CSV ─────────────────────────────────────────────────────
 # Write header if file doesn't exist yet
 if [ ! -f "$RESULTS_FILE" ]; then
-    echo "job_id,m,n,p,wall_time,user_time,sys_time,max_rss_kb,exit_code" > "$RESULTS_FILE"
+    echo "job_id,m,n,p,wall_max_s,exit_code" > "$RESULTS_FILE"
 fi
 
-echo "${SLURM_JOB_ID},${M},${N},${P},${WALL_TIME},${USER_TIME},${SYS_TIME},${MAX_RSS},${EXIT_CODE}" >> "$RESULTS_FILE"
+# Append
+echo "${SLURM_JOB_ID},${M},${N},${P},${WALL_MAX},${EXIT_CODE}" >> "$RESULTS_FILE"
 
 echo "[$(date)] Done. Results appended to $RESULTS_FILE"
