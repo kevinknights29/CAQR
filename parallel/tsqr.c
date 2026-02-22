@@ -9,6 +9,7 @@
 // Function Prototype
 void row_decomp(int m, int size, int rank, int *start, int *end);
 void remove_entries_below_diagonal(double *matrix, int m, int n);
+void apply_Q_to_R(int rows, int n, double *q_data, double *tau, double *C, double *result);
 
 
 int main(int argc, char *argv[]) {
@@ -127,7 +128,6 @@ int main(int argc, char *argv[]) {
 
 	// Clean up
 	if (rank == 0) {
-		free(matrix);
 		free(sendcounts);
 		free(displs);
 	}
@@ -156,6 +156,13 @@ int main(int argc, char *argv[]) {
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
 	remove_entries_below_diagonal(local_matrix, local_m, n);
+
+	// SAVE Q data (reflectors + tau) BEFORE zeroing below diagonal
+	double *Q0_data = malloc((size_t)(local_m * n) * sizeof(*Q0_data));
+	double *tau0 = malloc((size_t)n * sizeof(*tau0));
+	memcpy(Q0_data, local_matrix, (size_t)(local_m * n) * sizeof(*local_matrix));
+	memcpy(tau0, tau, (size_t)n * sizeof(*tau));
+
 	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	MPI_Barrier(MPI_COMM_WORLD);
 
@@ -250,9 +257,18 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Stage 2: Independent computation of the QR factorization of each stacked block row
+	double *Q1_data = NULL;    // stage-1 Q reflectors (2n x n)
+	double *tau1 = NULL;
 	if (rank == 0 || rank == 2) {
 		tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+
+		// SAVE stage-1 Q data
+		Q1_data = malloc((size_t)(local_m * n) * sizeof(*Q1_data));
+		tau1 = malloc((size_t)n  * sizeof(*tau1));
+		memcpy(Q1_data, local_matrix, (size_t)(local_m * n) * sizeof(*local_matrix));
+		memcpy(tau1, tau, (size_t)n * sizeof(*tau));
+
 		remove_entries_below_diagonal(local_matrix, local_m, n);
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
@@ -317,9 +333,18 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Stage 4: Independent computation of the QR factorization of each stacked block row
+	double *Q2_data = NULL;    // stage-2 Q reflectors (2n x n)
+	double *tau2 = NULL;
 	if (rank == 0) {
 		tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 		LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
+
+		// SAVE stage-2 Q data
+		Q2_data = malloc((size_t)(local_m * n) * sizeof(*Q2_data));
+		tau2 = malloc((size_t)n * sizeof(*tau2));
+		memcpy(Q2_data, local_matrix, (size_t)(local_m * n) * sizeof(*local_matrix));
+		memcpy(tau2, tau, (size_t)n * sizeof(*tau));
+
 		remove_entries_below_diagonal(local_matrix, local_m, n);
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
@@ -351,13 +376,108 @@ int main(int argc, char *argv[]) {
 		printf("[DEBUG] Rank %d wrote resulting R matrix %d x %d\n", rank, local_m, n);
 	}
 
-	// Cleanup
-	if (rank == 0) {
-		free(local_matrix);
-	}
-	MPI_Finalize();
+	// ── Gather all stage-0 Q data to rank 0 ─────────────────────────────────
+    // Each rank has Q0_data (mb x n) and tau0 (n).
+    // Rank 0 collects them all into Q0_all and tau0_all.
+    int Q0_per_rank = mb * n;   // elements per rank (assumes equal blocks)
+    double *Q0_all   = NULL;    // rank 0: (p * mb * n)
+    double *tau0_all = NULL;    // rank 0: (p * n)
 
-	return EXIT_SUCCESS;
+    if (rank == 0) {
+        Q0_all   = malloc((size_t)(size * Q0_per_rank) * sizeof(double));
+        tau0_all = malloc((size_t)(size * n)            * sizeof(double));
+    }
+    MPI_Gather(Q0_data, Q0_per_rank, MPI_DOUBLE, Q0_all,   Q0_per_rank, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Gather(tau0,    n,           MPI_DOUBLE, tau0_all, n,           MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // Rank 2 sends its stage-1 Q data to rank 0
+    double *Q1_rank2_data = NULL;
+    double *tau1_rank2    = NULL;
+    int Q1_size = 2 * n;   // rows of Q1 matrix (2n)
+    if (rank == 2) {
+        MPI_Send(Q1_data, Q1_size * n, MPI_DOUBLE, 0, 96, MPI_COMM_WORLD);
+        MPI_Send(tau1,    n,           MPI_DOUBLE, 0, 97, MPI_COMM_WORLD);
+    }
+    if (rank == 0) {
+        Q1_rank2_data = malloc((size_t)(Q1_size * n) * sizeof(double));
+        tau1_rank2    = malloc((size_t)n              * sizeof(double));
+        MPI_Recv(Q1_rank2_data, Q1_size * n, MPI_DOUBLE, 2, 96, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Recv(tau1_rank2,    n,           MPI_DOUBLE, 2, 97, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+
+    // ── Reconstruct A on rank 0 ──────────────────────────────────────────────
+    if (rank == 0) {
+        // R_final is the top n rows of local_matrix (after remove_entries_below_diagonal)
+        double *R_final = malloc((size_t)(n * n) * sizeof(double));
+        memcpy(R_final, local_matrix, (size_t)(n * n) * sizeof(double));
+
+        // --- Unroll stage 2: [R_01; R_23] = Q_final @ R_final ---
+        double *R_01_R_23 = malloc((size_t)(2 * n * n) * sizeof(double));  // (2n x n)
+        apply_Q_to_R(2 * n, n, Q2_data, tau2, R_final, R_01_R_23);
+        double *R_01 = R_01_R_23;            // top n rows
+        double *R_23 = R_01_R_23 + n * n;   // bottom n rows
+
+        // --- Unroll stage 1a (rank 0's Q): [R_0; R_1] = Q_01 @ R_01 ---
+        double *R_0_R_1 = malloc((size_t)(2 * n * n) * sizeof(double));
+        apply_Q_to_R(2 * n, n, Q1_data, tau1, R_01, R_0_R_1);
+        double *R_0 = R_0_R_1;
+        double *R_1 = R_0_R_1 + n * n;
+
+        // --- Unroll stage 1b (rank 2's Q): [R_2; R_3] = Q_23 @ R_23 ---
+        double *R_2_R_3 = malloc((size_t)(2 * n * n) * sizeof(double));
+        apply_Q_to_R(2 * n, n, Q1_rank2_data, tau1_rank2, R_23, R_2_R_3);
+        double *R_2 = R_2_R_3;
+        double *R_3 = R_2_R_3 + n * n;
+
+        // --- Unroll stage 0: A_i = Q_i @ R_i ---
+        double *A_reconstructed = malloc((size_t)(m * n) * sizeof(double));
+        for (int i = 0; i < size; i++) {
+            double *Ri = (i == 0) ? R_0
+                       : (i == 1) ? R_1
+                       : (i == 2) ? R_2
+                       :            R_3;
+
+            double *result_block = A_reconstructed + (size_t)(i * mb * n);
+            apply_Q_to_R(mb, n,
+                         Q0_all   + (size_t)(i * Q0_per_rank),
+                         tau0_all + (size_t)(i * n),
+                         Ri, result_block);
+        }
+
+        // Write reconstructed A
+        FILE *f = fopen("A_reconstructed.txt", "w");
+        for (int i = 0; i < m; i++) {
+            for (int j = 0; j < n; j++) {
+                fprintf(f, "%.10lf%s", A_reconstructed[(size_t)n * i + j],
+                        j < n - 1 ? ", " : "\n");
+            }
+        }
+        fclose(f);
+        printf("[DEBUG] Rank 0 wrote reconstructed A (%d x %d)\n", m, n);
+
+        // Validate against original
+        double max_err = 0.0;
+        for (int i = 0; i < m * n; i++) {
+            double err = fabs(A_reconstructed[i] - matrix[i]);
+            if (err > max_err) max_err = err;
+        }
+        printf("[VALIDATION] Max reconstruction error: %.2e\n", max_err);
+
+        free(R_final); free(R_01_R_23); free(R_0_R_1);
+        free(R_2_R_3); free(A_reconstructed);
+        free(Q1_rank2_data); free(tau1_rank2);
+        free(Q2_data); free(tau2);
+        free(Q0_all); free(tau0_all);
+        free(local_matrix); free(tau);
+        free(matrix);
+    }
+
+    free(Q0_data); free(tau0);
+    if (Q1_data) free(Q1_data);
+    if (tau1)    free(tau1);
+
+    MPI_Finalize();
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -410,4 +530,29 @@ void remove_entries_below_diagonal(double *matrix, const int m, const int n) {
 			}
 		}
 	}
+}
+
+
+/**
+ * \brief Form explicit thin Q from dgeqrf output, then compute Q @ C
+ * @param rows
+ * @param n
+ * @param q_data (rows x n) reflector data from dgeqrf (row-major)
+ * @param tau size min(rows,n)
+ * @param C (n x n) matrix to multiply — overwritten with Q @ C  (rows x n result)
+ * @param result pre-allocated (rows x n)
+ */
+void apply_Q_to_R(int rows, int n, double *q_data, double *tau, double *C, double *result) {
+	// 1. Form explicit thin Q: (rows x n)
+	double *Q = malloc((size_t)(rows * n) * sizeof(double));
+	memcpy(Q, q_data, (size_t)(rows * n) * sizeof(double));
+	LAPACKE_dorgqr(LAPACK_ROW_MAJOR, rows, n, n, Q, n, tau);
+
+	// 2. result (rows x n) = Q (rows x n) @ C (n x n)
+	cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+				rows, n, n,
+				1.0, Q, n,
+					 C, n,
+				0.0, result, n);
+	free(Q);
 }
