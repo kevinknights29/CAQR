@@ -3,12 +3,8 @@
 # Usage: bash submit_scaling.sh
 
 P=4
-
-# ── Define your scaling cases ─────────────────────────────────────────────────
-# Format: "m n"  — keep m/p >> n in all cases
-
-M_VALUES=(4000 8000 16000 32000 64000 128000)
-N_VALUES=(50 100 200)   # vary n independently for strong/weak scaling
+M_VALUES=(100 200 400 800 1000 2000 4000 8000 16000 32000 64000 128000)
+N_VALUES=(5 10 25 50 100 200)
 
 for N in "${N_VALUES[@]}"; do
     for M in "${M_VALUES[@]}"; do
