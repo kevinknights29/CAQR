@@ -3,10 +3,10 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=4                  # 4 MPI processes
 #SBATCH --cpus-per-task=1
-#SBATCH --time=01:00:00             # Adjust as needed
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/tsqr_%j.out
 #SBATCH --error=logs/tsqr_%j.err
-#SBATCH --partition=your_partition  # Change to your cluster's partition
+#SBATCH --partition=compute
 
 # ── Parameters passed via --export or environment variables ──────────────────
 # Usage: sbatch --export=ALL,M=10000,N=100 run_tsqr.sh
