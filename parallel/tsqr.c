@@ -1,3 +1,4 @@
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -465,6 +466,7 @@ int main(int argc, char *argv[]) {
             if (err > max_err) max_err = err;
         }
         printf("[VALIDATION] Max reconstruction error: %.2e\n", max_err);
+    	printf("[VALIDATION] Machine epsilon (double): %.2e\n", DBL_EPSILON);
 
         free(R_final); free(R_01_R_23); free(R_0_R_1);
         free(R_2_R_3); free(A_reconstructed);
