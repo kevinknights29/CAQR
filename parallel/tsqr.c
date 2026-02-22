@@ -377,30 +377,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Validate QR
-	if (rank == 0) {
-		char output_filename[256];
-		sprintf(output_filename, "caqr_matrix_%d_%d.txt", local_m, n);
-		FILE *file = fopen(output_filename, "w");
-		if (file == NULL) {
-			fprintf(stderr, "Unable to open: %s...\n", output_filename);
-			free(local_matrix);
-			return EXIT_FAILURE;
-		}
-		for (size_t i = 0; i < (size_t) n; i++) {
-			for (size_t j = 0; j < (size_t) n; j++) {
-				const size_t index = (size_t) n * i + j;
-				fprintf(file, "%.10lf", local_matrix[index]);
-				if (j < (size_t) (n - 1)) {
-					fprintf(file, ", ");
-				} else {
-					fprintf(file, "\n");
-				}
-			}
-		}
-		fclose(file);
-		printf("[DEBUG] Rank %d wrote resulting R matrix %d x %d\n", rank, local_m, n);
-	}
-
 	// ── Gather all stage-0 Q data to rank 0 ─────────────────────────────────
     // Each rank has Q0_data (mb x n) and tau0 (n).
     // Rank 0 collects them all into Q0_all and tau0_all.
@@ -468,18 +444,6 @@ int main(int argc, char *argv[]) {
                          tau0_all + (size_t)(i * n),
                          Ri, result_block);
         }
-
-        // Write reconstructed A
-        FILE *f = fopen("A_reconstructed.txt", "w");
-        for (size_t i = 0; i < (size_t) m; i++) {
-            for (size_t j = 0; j < (size_t) n; j++) {
-            	const size_t index = (size_t) n * i + j;
-                fprintf(f, "%.10lf%s", A_reconstructed[index],
-                        j < (size_t) (n - 1) ? ", " : "\n");
-            }
-        }
-        fclose(f);
-        printf("[DEBUG] Rank 0 wrote reconstructed A (%d x %d)\n", m, n);
 
         // Validate against original
         double max_err = 0.0;
