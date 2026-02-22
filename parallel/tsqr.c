@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,6 +103,7 @@ int main(int argc, char *argv[]) {
 	// Calculate local length from decomposition (1-indexed, inclusive)
 	int local_m = ending_row - starting_row + 1;
 	int local_matrix_size = local_m * n;
+	int mb = local_m; // original block size per rank (saved for later)
 
 	// Allocate local matrix
 	local_matrix = malloc((long unsigned) local_matrix_size * sizeof(*local_matrix));
@@ -448,7 +450,8 @@ int main(int argc, char *argv[]) {
         FILE *f = fopen("A_reconstructed.txt", "w");
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < n; j++) {
-                fprintf(f, "%.10lf%s", A_reconstructed[(size_t)n * i + j],
+            	const size_t index = (size_t) n * i + j;
+                fprintf(f, "%.10lf%s", A_reconstructed[index],
                         j < n - 1 ? ", " : "\n");
             }
         }
