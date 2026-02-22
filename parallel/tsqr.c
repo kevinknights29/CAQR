@@ -157,7 +157,6 @@ int main(int argc, char *argv[]) {
 	 */
 	double *tau = malloc((long unsigned) (m > n ? n : m) * sizeof(*tau));
 	LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, local_m, n, local_matrix, n, tau);
-	remove_entries_below_diagonal(local_matrix, local_m, n);
 
 	// SAVE Q data (reflectors + tau) BEFORE zeroing below diagonal
 	double *Q0_data = malloc((size_t)(local_m * n) * sizeof(*Q0_data));
@@ -165,6 +164,7 @@ int main(int argc, char *argv[]) {
 	memcpy(Q0_data, local_matrix, (size_t)(local_m * n) * sizeof(*local_matrix));
 	memcpy(tau0, tau, (size_t)n * sizeof(*tau));
 
+	remove_entries_below_diagonal(local_matrix, local_m, n);
 	printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	MPI_Barrier(MPI_COMM_WORLD);
 
@@ -410,24 +410,24 @@ int main(int argc, char *argv[]) {
     // ── Reconstruct A on rank 0 ──────────────────────────────────────────────
     if (rank == 0) {
         // R_final is the top n rows of local_matrix (after remove_entries_below_diagonal)
-        double *R_final = malloc((size_t)(n * n) * sizeof(double));
-        memcpy(R_final, local_matrix, (size_t)(n * n) * sizeof(double));
+        double *R_final = malloc((size_t)(n * n) * sizeof(*R_final));
+        memcpy(R_final, local_matrix, (size_t)(n * n) * sizeof(*local_matrix));
 
         // --- Unroll stage 2: [R_01; R_23] = Q_final @ R_final ---
-        double *R_01_R_23 = malloc((size_t)(2 * n * n) * sizeof(double));  // (2n x n)
-        apply_Q_to_R(2 * n, n, Q2_data, tau2, R_final, R_01_R_23);
-        double *R_01 = R_01_R_23;            // top n rows
-        double *R_23 = R_01_R_23 + n * n;   // bottom n rows
+        double *R_01_R_23 = malloc((size_t)(4 * mb * n) * sizeof(*R_01_R_23 )); //  Q2 output
+        apply_Q_to_R(4 * mb, n, Q2_data, tau2, R_final, R_01_R_23);
+        double *R_01 = R_01_R_23;            // top 2*mb rows → belongs to ranks 0 & 1
+        double *R_23 = R_01_R_23 + 2*mb*n;   // bottom 2*mb rows → belongs to ranks 2 & 3
 
         // --- Unroll stage 1a (rank 0's Q): [R_0; R_1] = Q_01 @ R_01 ---
-        double *R_0_R_1 = malloc((size_t)(2 * n * n) * sizeof(double));
-        apply_Q_to_R(2 * n, n, Q1_data, tau1, R_01, R_0_R_1);
-        double *R_0 = R_0_R_1;
-        double *R_1 = R_0_R_1 + n * n;
+        double *R_0_R_1 = malloc((size_t)(2 * mb * n) * sizeof(*R_0_R_1)); // Q1_rank0 output
+        apply_Q_to_R(2 * mb, n, Q1_data, tau1, R_01, R_0_R_1);
+    	double *R_0 = R_0_R_1;               // top mb rows
+    	double *R_1 = R_0_R_1 + mb * n;      // bottom mb rows
 
         // --- Unroll stage 1b (rank 2's Q): [R_2; R_3] = Q_23 @ R_23 ---
-        double *R_2_R_3 = malloc((size_t)(2 * n * n) * sizeof(double));
-        apply_Q_to_R(2 * n, n, Q1_rank2_data, tau1_rank2, R_23, R_2_R_3);
+        double *R_2_R_3 = malloc((size_t)(2 * mb * n) * sizeof(*R_2_R_3));
+        apply_Q_to_R(2 * mb, n, Q1_rank2_data, tau1_rank2, R_23, R_2_R_3); // Q1_rank2 output
         double *R_2 = R_2_R_3;
         double *R_3 = R_2_R_3 + n * n;
 
@@ -448,8 +448,8 @@ int main(int argc, char *argv[]) {
 
         // Write reconstructed A
         FILE *f = fopen("A_reconstructed.txt", "w");
-        for (int i = 0; i < m; i++) {
-            for (int j = 0; j < n; j++) {
+        for (int i = 0; i < (size_t) m; i++) {
+            for (int j = 0; j < (size_t) n; j++) {
             	const size_t index = (size_t) n * i + j;
                 fprintf(f, "%.10lf%s", A_reconstructed[index],
                         j < n - 1 ? ", " : "\n");
