@@ -25,7 +25,7 @@ fi
 
 # ── Load modules ──────────────────────
 module purge
-module module load gcc/15.2.0-gcc-8.5.0-r7c4jsu mpi/latest tbb/latest compiler-rt/latest mkl/latest
+module load gcc/15.2.0-gcc-8.5.0-r7c4jsu mpi/latest tbb/latest compiler-rt/latest mkl/latest
 
 # ── Setup directories ─────────────────────────────────────────────────────────
 mkdir -p logs results
