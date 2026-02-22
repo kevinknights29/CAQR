@@ -22,6 +22,10 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+	// Time measurement variables
+	double t_start, t_end;
+	double t_elapsed, t_max, t_min, t_avg;
+
 	// Check command line arguments
 	if (argc != 4) {
 		if (rank == 0) {
@@ -91,10 +95,10 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Broadcast rows to all ranks
-	MPI_Bcast(&m, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&m, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
 	// Broadcast columns to all ranks
-	MPI_Bcast(&n, 1, MPI_LONG, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
 	// Compute rows decomposition
 	int starting_row = 0;
@@ -126,8 +130,11 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	MPI_Barrier(MPI_COMM_WORLD);
+	t_start = MPI_Wtime();
+
 	// Scatter the matrix to all ranks
-	MPI_Scatterv(matrix, sendcounts, displs, MPI_DOUBLE, local_matrix, (int) local_matrix_size, MPI_LONG, 0, MPI_COMM_WORLD);
+	MPI_Scatterv(matrix, sendcounts, displs, MPI_DOUBLE, local_matrix, (int) local_matrix_size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 	// Clean up
 	if (rank == 0) {
@@ -352,6 +359,22 @@ int main(int argc, char *argv[]) {
 		printf("[DEBUG] Rank %d computed QR with 'LAPACKE_dgeqrf' of matrix %d x %d\n", rank, local_m, n);
 	}
 	MPI_Barrier(MPI_COMM_WORLD);
+	t_end = MPI_Wtime();
+
+	t_elapsed = t_end - t_start;
+
+	MPI_Reduce(&t_elapsed, &t_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+	MPI_Reduce(&t_elapsed, &t_min, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+	MPI_Reduce(&t_elapsed, &t_avg, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+	if (rank == 0) {
+		t_avg /= size;
+		printf("[TIMING] TSQR wall time across %d ranks\n", size);
+		printf("[TIMING] \tMax (critical path) : %.6f s\n", t_max);
+		printf("[TIMING] \tMin                 : %.6f s\n", t_min);
+		printf("[TIMING] \tAvg                 : %.6f s\n", t_avg);
+		printf("[TIMING] \tLoad imbalance      : %.2f%%\n", t_max > 0.0 ? 100.0 * (t_max - t_min) / t_max : 0.0);
+	}
 
 	// Validate QR
 	if (rank == 0) {
@@ -363,16 +386,15 @@ int main(int argc, char *argv[]) {
 			free(local_matrix);
 			return EXIT_FAILURE;
 		}
-		for (size_t i = 0; i < (size_t) local_m; i++) {
+		for (size_t i = 0; i < (size_t) n; i++) {
 			for (size_t j = 0; j < (size_t) n; j++) {
 				const size_t index = (size_t) n * i + j;
-				fprintf(file, "%.10lf", matrix[index]);
+				fprintf(file, "%.10lf", local_matrix[index]);
 				if (j < (size_t) (n - 1)) {
 					fprintf(file, ", ");
 				} else {
 					fprintf(file, "\n");
 				}
-
 			}
 		}
 		fclose(file);
