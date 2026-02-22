@@ -22,4 +22,4 @@ clean:
 
 test: matrix_generator tsqr
 	./matrix_generator 16 3
-	mpirun ./tsqr 16 3 matrix_16_3.txt
+	mpirun -np 4 ./tsqr 16 3 matrix_16_3.txt
