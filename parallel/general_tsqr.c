@@ -294,7 +294,7 @@ int main(int argc, char *argv[]) {
             remove_entries_below_diagonal(R_current, n, n);
             free(stacked);
 
-            printf("[Level %d] Rank %d ← rank %d: received R, 2n x n QR complete.\n", lvl, rank, rank + step);
+            printf("[Level %d] Rank %d <- rank %d: received R, 2n x n QR complete.\n", lvl, rank, rank + step);
         }
         /* Bystanders (not paired at this level) carry R_current forward.    */
     }
@@ -453,7 +453,7 @@ int main(int argc, char *argv[]) {
                 double *Q_lr   = Ql_all[lvl]   + q_off;
                 double *tau_lr = tauL_all[lvl] + tau_off;
 
-                /* Q_lr (2n x n) @ R_blocks[r] (n x n) → result (2n x n) */
+                /* Q_lr (2n x n) @ R_blocks[r] (n x n) -> result (2n x n) */
                 double *result = (double *)XMALLOC((size_t)(2 * n * n) * sizeof(double), 0);
                 apply_Q_to_R(2 * n, n, Q_lr, tau_lr, R_blocks[r], result);
 
@@ -471,7 +471,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Apply Q0[r] @ R_blocks[r] → A_block[r] */
+        /* Apply Q0[r] @ R_blocks[r] -> A_block[r] */
         double *A_rec = (double *)XMALLOC((size_t)(m * n) * sizeof(double), 0);
         int dst_off = 0;
         for (int r = 0; r < size; r++) {
