@@ -1,11 +1,8 @@
 //
 // Created by Kevin Knights on 2/22/26.
 //
-/* tsqr_parallel.c
- * Communication-Avoiding QR (TSQR) factorisation — generalised for p ≥ 2 processes.
- *
- *  Build:  mpicc -O2 -o tsqr tsqr_parallel.c -lmkl_rt -lm
- *  Run:    mpirun -np <p> ./tsqr <m> <n> <matrix_file>
+/*
+ * Communication-Avoiding QR (TSQR) factorization — generalized for p ≥ 2 processes.
  *
  *  Requirements:
  *    • p ≥ 2 MPI processes
@@ -14,28 +11,14 @@
  *
  *  Outputs (written by rank 0):
  *    R_final_<n>x<n>.txt  — the final upper-triangular R factor
- *    A_reconstructed.txt  — A rebuilt from Q·R (for numerical validation)
  *
  *  Algorithm — TSQR binary reduction tree:
- *    Stage 0  Each rank independently QR-factorises its local mb×n block.
- *    Tree     In ceil(log2(p)) rounds, pairs exchange their n×n R blocks;
- *             the receiver stacks [R_self ; R_partner] (2n×n) and
- *             re-factorises.  The sender exits the tree.
+ *    Stage 0  Each rank independently QR-factorizes its local mb x n block.
+ *    Tree     In ceil(log2(p)) rounds, pairs exchange their n x n R blocks;
+ *             the receiver stacks [R_self ; R_partner] (2n x n) and
+ *             re-factorizes.  The sender exits the tree.
  *    Gather   All Q reflectors (stage 0 and tree levels) are shipped to rank 0.
  *    Unroll   Rank 0 reverses the tree to reconstruct A = Q·R.
- *
- *  Bug fixes over the original 4-process prototype:
- *    • MPI_INT used for int scalars (was MPI_LONG — silent corruption)
- *    • MPI_DOUBLE used for the Scatterv receive type (was MPI_LONG)
- *    • Process count validated (≥ 2); algorithm works for any p ≥ 2
- *    • tau sized from local mb, not global m
- *    • MPI_Gatherv used for Q0 (variable block sizes across ranks)
- *    • All MPI return codes checked and reported
- *    • Named tag scheme replacing magic numbers
- *    • m and n broadcast in a single MPI_Bcast call
- *    • Dead code after MPI_Abort removed
- *    • R_final written correctly (n×n, not using wrong row count)
- *    • Hardcoded 4-process tree replaced by a general log2(p) loop
  */
 
 #include <float.h>
@@ -47,65 +30,59 @@
 #include "mkl.h"
 #include "mpi.h"
 
-/* ─── Message-tag scheme ──────────────────────────────────────────────────── *
- * R blocks are exchanged during the tree reduction. One unique tag per        *
- * level prevents messages from different levels from interfering.             *
- * MPI mandates MPI_TAG_UB >= 32 767, so 30 levels (tags 100-130) is safe.   */
+/*
+ * Message-tag scheme:
+ *  R blocks are exchanged during the tree reduction. One unique tag per
+ *      level prevents messages from different levels from interfering.
+ *  MPI mandates MPI_TAG_UB >= 32 767, so 30 levels (tags 100-130) is safe.
+ */
 #define TAG_R_LEVEL(l)   (100 + (l))
 
-/* ─── Allocation helpers (abort on failure) ───────────────────────────────── */
-#define XMALLOC(bytes, rank) \
-    xmalloc_checked_((bytes), (rank), __func__, __LINE__)
-#define XCALLOC(n_, sz, rank) \
-    xcalloc_checked_((n_), (sz), (rank), __func__, __LINE__)
+/* Allocation helpers (abort on failure) */
+#define XMALLOC(bytes, rank) xmalloc_checked_((bytes), (rank), __func__, __LINE__)
+#define XCALLOC(n_, sz, rank) xcalloc_checked_((n_), (sz), (rank), __func__, __LINE__)
 
-static void *xmalloc_checked_(size_t bytes, int rank,
-                               const char *fn, int line) {
+void *xmalloc_checked_(const size_t bytes, const int rank, const char *fn, const int line) {
     void *p = malloc(bytes);
     if (!p && bytes > 0) {
-        fprintf(stderr, "[Rank %d] malloc(%zu B) failed — %s:%d\n",
-                rank, bytes, fn, line);
+        fprintf(stderr, "[Rank %d] malloc(%zu B) failed — %s:%d\n", rank, bytes, fn, line);
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
     return p;
 }
 
-static void *xcalloc_checked_(size_t n, size_t sz, int rank,
-                               const char *fn, int line) {
+void *xcalloc_checked_(size_t n, size_t sz, int rank, const char *fn, int line) {
     void *p = calloc(n, sz);
     if (!p && n > 0 && sz > 0) {
-        fprintf(stderr, "[Rank %d] calloc(%zu, %zu) failed — %s:%d\n",
-                rank, n, sz, fn, line);
+        fprintf(stderr, "[Rank %d] calloc(%zu, %zu) failed — %s:%d\n", rank, n, sz, fn, line);
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
     return p;
 }
 
-/* ─── MPI error checker ───────────────────────────────────────────────────── */
-static void mpi_check_(int rc, const char *expr, int rank,
-                        const char *fn, int line) {
+/* MPI error checker */
+void mpi_check_(int rc, const char *expr, const int rank, const char *fn, const int line) {
     if (rc == MPI_SUCCESS) return;
     char msg[MPI_MAX_ERROR_STRING];
     int  len;
     MPI_Error_string(rc, msg, &len);
-    fprintf(stderr, "[Rank %d] MPI error in '%s' (%s:%d): %s\n",
-            rank, expr, fn, line, msg);
+    fprintf(stderr, "[Rank %d] MPI error in '%s' (%s:%d): %s\n", rank, expr, fn, line, msg);
     MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
 }
-#define MPI_CHK(call, rank)  mpi_check_((call), #call, (rank), __func__, __LINE__)
+#define MPI_CHK(call, rank) mpi_check_((call), #call, (rank), __func__, __LINE__)
 
-/* ─── Function prototypes ─────────────────────────────────────────────────── */
+/* Function prototypes */
 void row_decomp(int m, int size, int rank, int *start, int *end);
 void remove_entries_below_diagonal(double *matrix, int m, int n);
-void apply_Q_to_R(int rows, int n, double *q_data, double *tau,
-                  const double *C, double *result);
+void apply_Q_to_R(int rows, int n, double *q_data, double *tau, const double *C, double *result);
 
-/* ─── Binary-tree role predicates ────────────────────────────────────────── *
- *
- * At each step s = 2^lvl, ranks are partitioned into pairs (r, r+s) where
- * r % 2s == 0. The lower-index rank receives; the upper-index rank sends.
- * Ranks that do not form a complete pair at a given level ("bystanders")
- * carry their R_current unchanged to the next level.                         */
+/* 
+ * Binary-tree role predicates
+ *  At each step s = 2^lvl, ranks are partitioned into pairs (r, r+s) where
+ *      r % 2s == 0. The lower-index rank receives; the upper-index rank sends.
+ *  Ranks that do not form a complete pair at a given level ("bystanders")
+ *      carry their R_current unchanged to the next level.
+ */
 
 /** Returns 1 if rank is the receiver in its pair at this step. */
 static inline int is_recv(int rank, int size, int step) {
@@ -118,31 +95,28 @@ static inline int is_send(int rank, int size, int step) {
     return (rank % (2 * step) == step);
 }
 
-/* ══════════════════════════════════════════════════════════════════════════ */
 
 int main(int argc, char *argv[]) {
 
-    /* ── MPI initialisation ──────────────────────────────────────────────── */
+    /* MPI initialization */
     MPI_CHK(MPI_Init(&argc, &argv), -1);
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    /* ✔ Fix: validate process count */
     if (size < 2) {
         if (rank == 0)
             fprintf(stderr, "Error: requires at least 2 MPI processes.\n");
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    /* ── Argument parsing and broadcast ─────────────────────────────────── */
+    /* Argument parsing and broadcast */
     if (argc != 4) {
         if (rank == 0)
             fprintf(stderr, "Usage: %s <m> <n> <matrix_file>\n", argv[0]);
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    /* ✔ Fix: broadcast both dimensions in a single MPI_Bcast with MPI_INT */
     int  dims[2]       = {0, 0};
     char filename[256] = {'\0'};
 
@@ -174,7 +148,7 @@ int main(int argc, char *argv[]) {
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    /* ── Read matrix (rank 0 only) ───────────────────────────────────────── */
+    /* Read matrix (rank 0 only) */
     double *matrix = NULL;
     if (rank == 0) {
         FILE *fp = fopen(filename, "r");
@@ -201,15 +175,13 @@ int main(int argc, char *argv[]) {
         fclose(fp);
     }
 
-    /* ── Row decomposition and scatter ──────────────────────────────────── */
+    /* Row decomposition and scatter */
     int rs, re;
     row_decomp(m, size, rank, &rs, &re);
 
     /* mb = local block height.  Saved here; must not be modified after this. */
     const int mb = re - rs + 1;
 
-    /* ✔ Fix: all ranks build per-rank sendcounts/displs; non-root values
-     *        are ignored by MPI but keeping the pattern symmetric is safer. */
     int *sendcounts = NULL, *displs = NULL;
     if (rank == 0) {
         sendcounts = (int *)XMALLOC((size_t)size * sizeof(int), 0);
@@ -224,65 +196,63 @@ int main(int argc, char *argv[]) {
 
     double *local_matrix = (double *)XMALLOC((size_t)(mb * n) * sizeof(double), rank);
 
-    /* ✔ Fix: both send and receive types are MPI_DOUBLE (was MPI_LONG) */
-    MPI_CHK(MPI_Scatterv(matrix, sendcounts, displs, MPI_DOUBLE,
-                          local_matrix, mb * n, MPI_DOUBLE,
-                          0, MPI_COMM_WORLD), rank);
+    MPI_CHK(MPI_Scatterv(matrix, sendcounts, displs, MPI_DOUBLE, local_matrix, mb * n, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
 
     if (rank == 0) { free(sendcounts); free(displs); }
 
-    /* ── Compute tree depth: ceil(log2(size)) ────────────────────────────── */
+    /* Compute tree depth: ceil(log2(size)) */
     int num_levels = 0;
     for (int p = size; p > 1; p = (p + 1) / 2) num_levels++;
 
-    /* ══════════════════════════════════════════════════════════════════════
-     * STAGE 0 — Local QR of the mb×n block on each rank.
+    /* 
+     * ======================================================================
+     * STAGE 0 — Local QR of the mb x n block on each rank.
      *
-     * After factorisation we keep:
-     *   Q0_data  : the packed Householder reflectors (mb×n) from dgeqrf
+     * After factorization, we keep:
+     *   Q0_data  : the packed Householder reflectors (mb x n) from dgeqrf
      *   tau0     : the scalar factors (min(mb,n) elements)
-     *   R_current: the compact upper-triangular n×n R block (only the top
-     *              n rows of the factorisation, below-diagonal zeros stripped)
+     *   R_current: the compact upper-triangular n x n R block (only the top
+     *              n rows of the factorization, below-diagonal zeros stripped)
      *
      * Only R_current is forwarded into the reduction tree; Q0_data and tau0
      * are gathered at the end for reconstruction.
-     * ══════════════════════════════════════════════════════════════════════ */
+     * ====================================================================== 
+     */
 
-    /* ✔ Fix: tau0_n = min(mb, n) — sized from the LOCAL block, not global m */
     const int tau0_n = (mb < n) ? mb : n;
-    double *tau0    = (double *)XMALLOC((size_t) tau0_n   * sizeof(double), rank);
-    double *Q0_data = (double *)XMALLOC((size_t)(mb * n)  * sizeof(double), rank);
+    double *tau0 = (double *)XMALLOC((size_t) tau0_n * sizeof(double), rank);
+    double *Q0_data = (double *)XMALLOC((size_t)(mb * n) * sizeof(double), rank);
 
     LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, mb, n, local_matrix, n, tau0);
 
     /* Save Householder reflectors before extracting R */
     memcpy(Q0_data, local_matrix, (size_t)(mb * n) * sizeof(double));
 
-    /* Extract compact n×n R into R_current; transmitting only n×n (not the
-     * full mb×n block) keeps tree communication cost O(n²) per level.       */
+    /*
+     * Extract compact n x n R into R_current;
+     * transmitting only n x n (not the full mb x n block) keeps tree communication cost O(n^2) per level.
+     */
     double *R_current = (double *)XMALLOC((size_t)(n * n) * sizeof(double), rank);
     memcpy(R_current, local_matrix, (size_t)(n * n) * sizeof(double));
     remove_entries_below_diagonal(R_current, n, n);
     free(local_matrix); local_matrix = NULL;
 
-    printf("[Stage 0] Rank %d: QR of local block (%d×%d) complete.\n",
-           rank, mb, n);
+    printf("[Stage 0] Rank %d: QR of local block (%d x %d) complete.\n", rank, mb, n);
 
-    /* ══════════════════════════════════════════════════════════════════════
+    /* 
+     * ======================================================================
      * TREE REDUCTION — ceil(log2(p)) rounds of pairwise R-block exchange.
-     *
-     * ✔ Fix: this replaces the hardcoded 4-process sequence with a
-     *         general loop that works for any p >= 2.
      *
      * At level lvl (step = 2^lvl):
      *   Sender     — sends R_current to its partner rank (rank - step),
      *                frees R_current, and exits the tree (active = 0).
      *   Receiver   — receives R_partner, stacks [R_current ; R_partner]
-     *                (2n×n), QR-factorises, saves reflectors for
-     *                reconstruction, and continues with the new n×n R.
+     *                (2n x n), QR-factorizes, saves reflectors for
+     *                reconstruction, and continues with the new n x n R.
      *   Bystander  — rank not paired at this level (only happens when p is
      *                not a power of 2); carries R_current unchanged forward.
-     * ══════════════════════════════════════════════════════════════════════ */
+     * ====================================================================== 
+     */
     double **Q_tree   = (double **)XCALLOC((size_t)num_levels, sizeof(double *), rank);
     double **tau_tree = (double **)XCALLOC((size_t)num_levels, sizeof(double *), rank);
 
@@ -291,31 +261,25 @@ int main(int argc, char *argv[]) {
         const int step = 1 << lvl;
 
         if (is_send(rank, size, step)) {
-
-            /* ── Sender path ── */
-            MPI_CHK(MPI_Send(R_current, n * n, MPI_DOUBLE,
-                              rank - step, TAG_R_LEVEL(lvl), MPI_COMM_WORLD), rank);
+            /* Sender path */
+            MPI_CHK(MPI_Send(R_current, n * n, MPI_DOUBLE, rank - step, TAG_R_LEVEL(lvl), MPI_COMM_WORLD), rank);
             free(R_current); R_current = NULL;
             active = 0;
-            printf("[Level %d] Rank %d → rank %d: sent R, exiting tree.\n",
-                   lvl, rank, rank - step);
+            printf("[Level %d] Rank %d -> rank %d: sent R, exiting tree.\n", lvl, rank, rank - step);
 
         } else if (is_recv(rank, size, step)) {
-
-            /* ── Receiver path ── */
+            /* Receiver path */
             double *R_recv = (double *)XMALLOC((size_t)(n * n) * sizeof(double), rank);
-            MPI_CHK(MPI_Recv(R_recv, n * n, MPI_DOUBLE,
-                              rank + step, TAG_R_LEVEL(lvl),
-                              MPI_COMM_WORLD, MPI_STATUS_IGNORE), rank);
+            MPI_CHK(MPI_Recv(R_recv, n * n, MPI_DOUBLE, rank + step, TAG_R_LEVEL(lvl), MPI_COMM_WORLD, MPI_STATUS_IGNORE), rank);
 
-            /* Stack [R_current (n×n) ; R_recv (n×n)] → 2n×n */
+            /* Stack [R_current (n x n) ; R_recv (n x n)] -> 2n x n */
             double *stacked = (double *)XMALLOC((size_t)(2 * n * n) * sizeof(double), rank);
-            memcpy(stacked,         R_current, (size_t)(n * n) * sizeof(double));
+            memcpy(stacked, R_current, (size_t)(n * n) * sizeof(double));
             memcpy(stacked + n * n, R_recv,    (size_t)(n * n) * sizeof(double));
             free(R_recv);
             free(R_current); R_current = NULL;
 
-            /* QR of the 2n×n stacked matrix; tau size = min(2n, n) = n */
+            /* QR of the 2n x n stacked matrix; tau size = min(2n, n) = n */
             double *tau_l = (double *)XMALLOC((size_t)n * sizeof(double), rank);
             LAPACKE_dgeqrf(LAPACK_ROW_MAJOR, 2 * n, n, stacked, n, tau_l);
 
@@ -324,39 +288,38 @@ int main(int argc, char *argv[]) {
             tau_tree[lvl] = tau_l;
             memcpy(Q_tree[lvl], stacked, (size_t)(2 * n * n) * sizeof(double));
 
-            /* Update R_current to the new upper-triangular n×n R */
+            /* Update R_current to the new upper-triangular n x n R */
             R_current = (double *)XMALLOC((size_t)(n * n) * sizeof(double), rank);
             memcpy(R_current, stacked, (size_t)(n * n) * sizeof(double));
             remove_entries_below_diagonal(R_current, n, n);
             free(stacked);
 
-            printf("[Level %d] Rank %d ← rank %d: received R, 2n×n QR complete.\n",
-                   lvl, rank, rank + step);
+            printf("[Level %d] Rank %d ← rank %d: received R, 2n x n QR complete.\n", lvl, rank, rank + step);
         }
         /* Bystanders (not paired at this level) carry R_current forward.    */
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    /* ══════════════════════════════════════════════════════════════════════
+    /* 
+     * ======================================================================
      * GATHER — ship all Q reflectors to rank 0 for reconstruction.
      *
      * Stage-0 Q blocks have variable height (mb may differ across ranks),
-     * so MPI_Gatherv is required.
-     * ✔ Fix: was MPI_Gather with a fixed count, which is wrong for
-     *         non-uniform distributions (e.g. m=9, p=4 → 3,2,2,2 rows).
+     *  so MPI_Gatherv is required.
      *
-     * Tree-level Q blocks are always 2n×n; ranks that were not receivers at
+     * Tree-level Q blocks are always 2n x n; ranks that were not receivers at
      * a given level contribute 0 elements.
-     * ══════════════════════════════════════════════════════════════════════ */
+     * ====================================================================== 
+     */
 
-    /* --- Gather per-rank block heights (mb) to rank 0 --- */
+    /* Gather per-rank block heights (mb) to rank 0 */
     int *all_mb = NULL;
     if (rank == 0) all_mb = (int *)XMALLOC((size_t)size * sizeof(int), 0);
     MPI_CHK(MPI_Gather(&mb, 1, MPI_INT, all_mb, 1, MPI_INT, 0, MPI_COMM_WORLD), rank);
 
-    /* --- Gather stage-0 Q reflectors (variable size across ranks) --- */
-    int    *q0_cnt = NULL, *q0_dsp = NULL;
-    int    *t0_cnt = NULL, *t0_dsp = NULL;
+    /* Gather stage-0 Q reflectors (variable size across ranks) */
+    int *q0_cnt = NULL, *q0_dsp = NULL;
+    int *t0_cnt = NULL, *t0_dsp = NULL;
     double *Q0_all = NULL, *tau0_all = NULL;
 
     if (rank == 0) {
@@ -376,16 +339,14 @@ int main(int argc, char *argv[]) {
         tau0_all = (double *)XMALLOC((size_t)t0_tot * sizeof(double), 0);
     }
 
-    MPI_CHK(MPI_Gatherv(Q0_data, mb * n, MPI_DOUBLE,
-                         Q0_all, q0_cnt, q0_dsp, MPI_DOUBLE,
-                         0, MPI_COMM_WORLD), rank);
-    MPI_CHK(MPI_Gatherv(tau0, tau0_n, MPI_DOUBLE,
-                         tau0_all, t0_cnt, t0_dsp, MPI_DOUBLE,
-                         0, MPI_COMM_WORLD), rank);
+    MPI_CHK(MPI_Gatherv(Q0_data, mb * n, MPI_DOUBLE, Q0_all, q0_cnt, q0_dsp, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
+    MPI_CHK(MPI_Gatherv(tau0, tau0_n, MPI_DOUBLE, tau0_all, t0_cnt, t0_dsp, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
     free(Q0_data); Q0_data = NULL;
     free(tau0);    tau0    = NULL;
 
-    /* --- Gather tree-level Q reflectors level by level ---
+    /* 
+     * ======================================================================
+     * Gather tree-level Q reflectors level by level
      *
      * For each level lvl:
      *   Receivers at that level contribute 2*n*n Q values and n tau values.
@@ -396,6 +357,7 @@ int main(int argc, char *argv[]) {
      *   Ql_all[lvl].  Used during reconstruction to locate Q(r, lvl).
      * The corresponding tau offset = recv_q_dsp[lvl][r] / (2*n) because
      * every receiver contributes exactly 2*n*n Q elements and n tau elements.
+     * ======================================================================
      */
     double **Ql_all    = NULL;
     double **tauL_all  = NULL;
@@ -426,11 +388,11 @@ int main(int argc, char *argv[]) {
 
             int qd = 0, td = 0;
             for (int r = 0; r < size; r++) {
-                const int recv_r   = is_recv(r, size, step);
-                cnt_q[r]           = recv_r ? 2 * n * n : 0;
-                dsp_q[r]           = qd;  qd += cnt_q[r];
-                cnt_t[r]           = recv_r ? n          : 0;
-                dsp_t[r]           = td;  td += cnt_t[r];
+                const int recv_r = is_recv(r, size, step);
+                cnt_q[r] = recv_r ? 2 * n * n : 0;
+                dsp_q[r] = qd;  qd += cnt_q[r];
+                cnt_t[r] = recv_r ? n          : 0;
+                dsp_t[r] = td;  td += cnt_t[r];
                 recv_q_dsp[lvl][r] = dsp_q[r];
             }
             const int q_tot = qd, t_tot = td;
@@ -442,10 +404,8 @@ int main(int argc, char *argv[]) {
             tauL_all[lvl] = gt;
         }
 
-        MPI_CHK(MPI_Gatherv(am_recv ? Q_tree[lvl]   : NULL, my_qcnt, MPI_DOUBLE,
-                              gq, cnt_q, dsp_q, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
-        MPI_CHK(MPI_Gatherv(am_recv ? tau_tree[lvl] : NULL, my_tcnt, MPI_DOUBLE,
-                              gt, cnt_t, dsp_t, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
+        MPI_CHK(MPI_Gatherv(am_recv ? Q_tree[lvl]   : NULL, my_qcnt, MPI_DOUBLE, gq, cnt_q, dsp_q, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
+        MPI_CHK(MPI_Gatherv(am_recv ? tau_tree[lvl] : NULL, my_tcnt, MPI_DOUBLE, gt, cnt_t, dsp_t, MPI_DOUBLE, 0, MPI_COMM_WORLD), rank);
 
         if (rank == 0) { free(cnt_q); free(dsp_q); free(cnt_t); free(dsp_t); }
 
@@ -456,49 +416,52 @@ int main(int argc, char *argv[]) {
     free(Q_tree);   Q_tree   = NULL;
     free(tau_tree); tau_tree = NULL;
 
-    /* ══════════════════════════════════════════════════════════════════════
+    /* ======================================================================
      * RECONSTRUCT A = Q0 Q1 … Q_L R  (rank 0 only)
      *
-     * We maintain an array R_blocks[r] = the n×n intermediate R for rank r's
+     * We maintain an array R_blocks[r] = the n x n intermediate R for rank r's
      * rows. Unrolling the tree from the highest level down splits each R block
      * into two sub-blocks by applying the stored Q factor.
      *
-     * After all levels are unrolled, R_blocks[r] is the n×n R factor that
+     * After all levels are unrolled, R_blocks[r] is the n x n R factor that
      * was the input to rank r's stage-0 QR.  Applying Q0[r] yields A_block[r].
-     * ══════════════════════════════════════════════════════════════════════ */
+     * ====================================================================== */
     if (rank == 0) {
-
-        /* Snapshot of the final R (the n×n upper-triangular output) */
+        /* Snapshot of the final R (the n x n upper-triangular output) */
         double *R_final = (double *)XMALLOC((size_t)(n * n) * sizeof(double), 0);
         memcpy(R_final, R_current, (size_t)(n * n) * sizeof(double));
 
         /* Initialise R_blocks: rank 0 owns R_current; all others start NULL. */
         double **R_blocks = (double **)XCALLOC((size_t)size, sizeof(double *), 0);
         R_blocks[0] = R_current;
-        R_current   = NULL;   /* ownership transferred */
+        R_current = NULL;   /* ownership transferred */
 
-        /* ── Unroll from highest level down to level 0 ── */
+        /* Unroll from the highest level down to level 0 */
         for (int lvl = num_levels - 1; lvl >= 0; lvl--) {
             const int step = 1 << lvl;
 
             for (int r = 0; r < size; r++) {
                 if (!is_recv(r, size, step) || !R_blocks[r]) continue;
 
-                /* Locate Q and tau for receiver r at this level.
+                /*
+                 * Locate Q and tau for receiver r at this level.
                  * Every receiver contributes exactly 2*n*n Q values, so
-                 * tau_off = q_off / (2*n).                                  */
+                 * tau_off = q_off / (2*n).
+                 */
                 const int q_off   = recv_q_dsp[lvl][r];
                 const int tau_off = q_off / (2 * n);
                 double *Q_lr   = Ql_all[lvl]   + q_off;
                 double *tau_lr = tauL_all[lvl] + tau_off;
 
-                /* Q_lr (2n×n) @ R_blocks[r] (n×n) → result (2n×n) */
+                /* Q_lr (2n x n) @ R_blocks[r] (n x n) → result (2n x n) */
                 double *result = (double *)XMALLOC((size_t)(2 * n * n) * sizeof(double), 0);
                 apply_Q_to_R(2 * n, n, Q_lr, tau_lr, R_blocks[r], result);
 
-                /* Split result:
-                 *   top n rows    → R_blocks[r]        (left child)
-                 *   bottom n rows → R_blocks[r + step] (right child) */
+                /*
+                 * Split result:
+                 *   top n rows -> R_blocks[r]           (left child)
+                 *   bottom n rows -> R_blocks[r + step] (right child)
+                 */
                 free(R_blocks[r]);
                 R_blocks[r]        = (double *)XMALLOC((size_t)(n * n) * sizeof(double), 0);
                 R_blocks[r + step] = (double *)XMALLOC((size_t)(n * n) * sizeof(double), 0);
@@ -508,7 +471,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* ── Apply Q0[r] @ R_blocks[r] → A_block[r] ── */
+        /* Apply Q0[r] @ R_blocks[r] → A_block[r] */
         double *A_rec = (double *)XMALLOC((size_t)(m * n) * sizeof(double), 0);
         int dst_off = 0;
         for (int r = 0; r < size; r++) {
@@ -522,13 +485,13 @@ int main(int argc, char *argv[]) {
         }
         free(R_blocks);
 
-        /* ── Write R_final ── */
+        /* Write R_final */
         {
             char fname[64];
-            snprintf(fname, sizeof(fname), "R_final_%dx%d.txt", n, n);
+            snprintf(fname, sizeof(fname), "TSQR_R_final_%dx%d.txt", n, n);
             FILE *fp = fopen(fname, "w");
             if (!fp) {
-                perror("fopen R_final");
+                perror("fopen TSQR_R_final");
             } else {
                 for (int i = 0; i < n; i++) {
                     for (int j = 0; j < n; j++)
@@ -542,24 +505,7 @@ int main(int argc, char *argv[]) {
             free(R_final);
         }
 
-        /* ── Write reconstructed A ── */
-        {
-            FILE *fp = fopen("A_reconstructed.txt", "w");
-            if (!fp) {
-                perror("fopen A_reconstructed");
-            } else {
-                for (int i = 0; i < m; i++) {
-                    for (int j = 0; j < n; j++)
-                        fprintf(fp, "%.10lf%s",
-                                A_rec[i * n + j],
-                                j < n - 1 ? ", " : "\n");
-                }
-                fclose(fp);
-                printf("[Rank 0] Written: A_reconstructed.txt\n");
-            }
-        }
-
-        /* ── Numerical validation ── */
+        /* Numerical validation */
         double max_err = 0.0;
         for (int i = 0; i < m * n; i++) {
             double e = fabs(A_rec[i] - matrix[i]);
@@ -568,7 +514,7 @@ int main(int argc, char *argv[]) {
         printf("[VALIDATION] Max reconstruction error : %.2e\n", max_err);
         printf("[VALIDATION] Machine epsilon (double) : %.2e\n", DBL_EPSILON);
 
-        /* ── Cleanup (rank 0) ── */
+        /* Cleanup (rank 0) */
         free(A_rec);
         free(matrix);
         free(all_mb);
@@ -585,14 +531,12 @@ int main(int argc, char *argv[]) {
         free(recv_q_dsp);
     }
 
-    /* ── Cleanup (all non-root ranks) ── */
+    /* Cleanup (all non-root ranks) */
     if (R_current) { free(R_current); R_current = NULL; }
 
     MPI_CHK(MPI_Finalize(), rank);
     return EXIT_SUCCESS;
 }
-
-/* ══════════════════════════════════════════════════════════════════════════ */
 
 /**
  * @brief Row decomposition — assigns a contiguous range of rows to each rank.
@@ -636,25 +580,25 @@ void remove_entries_below_diagonal(double *matrix, const int m, const int n) {
 /**
  * @brief Compute result = Q @ C, where Q is given in packed Householder form.
  *
- * Forms the explicit thin Q (rows×n) via dorgqr, then multiplies by C (n×n)
- * to yield result (rows×n).  All matrices are row-major.
+ * Forms the explicit thin Q (rows x n) via dorgqr, then multiplies by C (n x n)
+ * to yield result (rows x n).  All matrices are row-major.
  *
  * @param rows    Number of rows in the Q matrix.
  * @param n       Number of columns (also the width of C and result).
- * @param q_data  Packed Householder reflectors from dgeqrf (rows×n, row-major).
+ * @param q_data  Packed Householder reflectors from dgeqrf (rows x n, row-major).
  * @param tau     Scalar factors from dgeqrf (min(rows,n) elements).
- * @param C       Input matrix (n×n, row-major).  Not modified.
- * @param result  Output matrix (rows×n, row-major).  Must be pre-allocated.
+ * @param C       Input matrix (n x n, row-major).  Not modified.
+ * @param result  Output matrix (rows x n, row-major).  Must be pre-allocated.
  */
 void apply_Q_to_R(int rows, int n, double *q_data, double *tau,
                   const double *C, double *result) {
-    /* 1. Form the explicit thin Q (rows×n) */
+    /* 1. Form the explicit thin Q (rows x n) */
     double *Q = (double *)malloc((size_t)(rows * n) * sizeof(double));
     if (!Q) { MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE); }
     memcpy(Q, q_data, (size_t)(rows * n) * sizeof(double));
     LAPACKE_dorgqr(LAPACK_ROW_MAJOR, rows, n, n, Q, n, tau);
 
-    /* 2. result (rows×n) = Q (rows×n) × C (n×n) */
+    /* 2. result (rows x n) = Q (rows x n)  x  C (n x n) */
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                 rows, n, n,
                 1.0, Q, n,
